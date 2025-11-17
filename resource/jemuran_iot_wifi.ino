@@ -2,28 +2,29 @@
 #include <ESP8266HTTPClient.h>
 
 // === WiFi Configuration ===
-const char* ssid = "Lenovo";       // Nama WiFi
-const char* password = "sandinyaapa"; // Password WiFi
+const char* ssid = "eepiswlan";
+const char* password = "eepisJOSS";
 
 // === Server Configuration ===
-const char* serverURL = "http://192.168.1.6/iot-jemuran/api/save.php"; // ambil ip laptop anda dan path folder tersimpan
-const char* deviceId = "jemuran_001"; // ID unik device
+const char* serverURL = "http://10.253.128.209/iot-jemuran/api/save.php";
+const char* deviceId = "jemuran_001";
 
 // === Pin Definition ===
-#define rainSensor A0   // Sensor hujan analog
-#define in3 D1          // L298N in3
-#define in4 D2          // L298N in4
-#define enb D5          // L298N enb (PWM)
-#define ledStatus D4    // LED status
+#define rainSensor A0
+#define in3 D1
+#define in4 D2
+#define enb D5
+#define ledStatus D4
 
-// === Variabel ===
+// === Variables ===
 int rainValue;
-int threshold = 500; // batas hujan (kalibrasi sensor)
+int threshold = 700;  
+String lastStatus = "";  // status sebelumnya
+String motor_action = "";
 
 void setup() {
   Serial.begin(115200);
 
-  // Setup pin
   pinMode(in3, OUTPUT);
   pinMode(in4, OUTPUT);
   pinMode(enb, OUTPUT);
@@ -48,29 +49,39 @@ void setup() {
 }
 
 void loop() {
+  // Baca sensor
   rainValue = analogRead(rainSensor);
   Serial.print("Nilai Sensor: ");
   Serial.println(rainValue);
 
+  // Tentukan status
   String status;
-
   if (rainValue < threshold) {
-    // Hujan
-    digitalWrite(ledStatus, HIGH);
-    Serial.println("🌧 Hujan terdeteksi → Motor narik jemuran 3 detik");
-    pullClothes(5000);
-    
     status = "hujan";
   } else {
-    // Cerah
-    digitalWrite(ledStatus, LOW);
-    Serial.println("☀ Cuaca cerah → Motor keluarin jemuran 5 detik");
-    extendClothes(5000);
-    
     status = "cerah";
   }
 
-  // Kirim data ke server
+  // Gerakkan motor HANYA jika status cuaca berubah
+  if (status != lastStatus) {
+    Serial.println("=== STATUS BERUBAH ===");
+
+    if (status == "hujan") {
+      digitalWrite(ledStatus, HIGH);
+      Serial.println("🌧️ Hujan terdeteksi → Motor narik jemuran 3 detik");
+      pullClothes(3000);
+      motor_action = "ON";
+    } else {
+      digitalWrite(ledStatus, LOW);
+      Serial.println("☀️ Cuaca cerah → Motor keluarin jemuran 5 detik");
+      extendClothes(3000);
+      motor_action = "OFF";
+    }
+
+    lastStatus = status;  // simpan status terbaru
+  }
+
+  // Kirim data ke server setiap loop
   if (WiFi.status() == WL_CONNECTED) {
     WiFiClient client;
     HTTPClient http;
@@ -78,10 +89,12 @@ void loop() {
     http.begin(client, serverURL);
     http.addHeader("Content-Type", "application/json");
 
-    String jsonData = "{\"device_id\":\"" + String(deviceId) + 
-                  "\",\"rain_value\":" + String(rainValue) + 
-                  ",\"status\":\"" + status + 
-                  "\",\"motor_action\":\"STOP\"}";
+    String jsonData = "{";
+jsonData += "\"device_id\":\"" + String(deviceId) + "\",";
+jsonData += "\"rain_value\":" + String(rainValue) + ",";
+jsonData += "\"status\":\"" + status + "\",";
+jsonData += "\"motor_action\":\"" + motor_action + "\"";
+jsonData += "}";
 
 
     int httpResponseCode = http.POST(jsonData);
@@ -98,10 +111,10 @@ void loop() {
     http.end();
   }
 
-  delay(10000); // delay antar update (10 detik)
+  delay(10000);  // cek tiap 10 detik
 }
 
-// Fungsi tarik jemuran (reverse)
+// === Motor Functions ===
 void pullClothes(unsigned long duration) {
   digitalWrite(in3, HIGH);
   digitalWrite(in4, LOW);
@@ -110,7 +123,6 @@ void pullClothes(unsigned long duration) {
   stopMotor();
 }
 
-// Fungsi keluarin jemuran (forward)
 void extendClothes(unsigned long duration) {
   digitalWrite(in3, LOW);
   digitalWrite(in4, HIGH);
@@ -119,10 +131,9 @@ void extendClothes(unsigned long duration) {
   stopMotor();
 }
 
-// Fungsi stop motor
 void stopMotor() {
   digitalWrite(in3, LOW);
   digitalWrite(in4, LOW);
   analogWrite(enb, 0);
-  Serial.println("⏹ Motor berhenti");
+  Serial.println("⏹️ Motor berhenti");
 }
